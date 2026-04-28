@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "activeGroupId": "g-demo",
+  "groups": [
+    {
+      "id": "g-demo",
+      "title": "示例",
+      "placeIds": ["p-demo-home", "p-demo-work"],
+      "guideMd": "## 示例便笺\n\n- 支持 **Markdown**\n- 切换分组会在右上角显示"
+    }
+  ],
+  "places": {
+    "p-demo-home": {
+      "id": "p-demo-home",
+      "name": "示例常显点",
+      "lat": 30.246,
+      "lng": 120.143,
+      "note": "示例数据，可切换到下一个配置",
+      "pinned": true
+    },
+    "p-demo-work": {
+      "id": "p-demo-work",
+      "name": "示例点位",
+      "lat": 30.255,
+      "lng": 120.16,
+      "note": ""
+    }
+  }
+}
