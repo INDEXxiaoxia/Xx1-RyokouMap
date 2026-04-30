@@ -2,6 +2,7 @@ import { useId, useMemo, useRef, useState } from 'react';
 import type { TripData } from '../types/trip';
 import type { TripAction } from '../hooks/useTripData';
 import { SortablePlaceList } from './SortablePlaceList';
+import { SortableGroupTabs } from './SortableGroupTabs';
 import { exportTripFilename } from '../lib/tripStorage';
 import type { TripConfigOption } from '../data/tripConfigs';
 
@@ -178,19 +179,15 @@ export function Sidebar({
       <section className="sidebar-section">
         <div className="sidebar-label">分组（日期 / 行程段）</div>
         <div className="group-tabs">
-          {data.groups.map((g) => (
-            <button
-              key={g.id}
-              type="button"
-              className={`group-tab ${g.id === activeGroupId ? 'group-tab--active' : ''}`}
-              onClick={() => {
-                dispatch({ type: 'setActiveGroup', id: g.id });
-                onSelectPlace(null);
-              }}
-            >
-              {g.title}
-            </button>
-          ))}
+          <SortableGroupTabs
+            groups={data.groups}
+            activeGroupId={activeGroupId}
+            onSelectGroup={(id) => {
+              dispatch({ type: 'setActiveGroup', id });
+              onSelectPlace(null);
+            }}
+            onReorder={(groupIds) => dispatch({ type: 'reorderGroups', groupIds })}
+          />
           <button
             type="button"
             className="group-tab group-tab--add"

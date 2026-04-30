@@ -7,9 +7,12 @@ import {
   createTripConfig,
   deleteTripConfig,
   ensureTripConfigsInitialized,
+  getBundledDefaultTripConfig,
+  getBundledTripConfigById,
   getActiveTripConfigId,
   getDefaultTripConfig,
   getTripConfigById,
+  listBundledTripConfigs,
   listTripConfigs,
   renameTripConfig,
   setActiveTripConfigId,
@@ -37,6 +40,7 @@ export type TripAction =
   | { type: 'updatePlace'; id: string; patch: Partial<Omit<Place, 'id'>> }
   | { type: 'removePlace'; id: string }
   | { type: 'reorderPlaces'; groupId: string; placeIds: string[] }
+  | { type: 'reorderGroups'; groupIds: string[] }
   | { type: 'movePlaceToGroup'; placeId: string; targetGroupId: string };
 
 function stripPlaces(data: TripData, removeIds: Set<string>): Record<string, Place> {
@@ -211,6 +215,17 @@ function tripReducer(state: TripData, action: TripAction): TripData {
       };
     }
 
+    case 'reorderGroups': {
+      const nextIds = action.groupIds;
+      if (nextIds.length !== state.groups.length) return state;
+      const cur = new Set(state.groups.map((g) => g.id));
+      if (nextIds.some((id) => !cur.has(id))) return state;
+      const byId = new Map(state.groups.map((g) => [g.id, g] as const));
+      const next = nextIds.map((id) => byId.get(id)).filter(Boolean) as typeof state.groups;
+      if (next.length !== state.groups.length) return state;
+      return { ...state, groups: next };
+    }
+
     case 'movePlaceToGroup': {
       const { placeId, targetGroupId } = action;
       if (!state.places[placeId]) return state;
@@ -236,28 +251,49 @@ function tripReducer(state: TripData, action: TripAction): TripData {
   }
 }
 
-export function useTripData() {
-  const [configs, setConfigs] = useState(() => listTripConfigs());
+export type UseTripDataOptions = {
+  /** 为 false 时不把当前 reducer 状态写回本地存储（展示页用，避免误持久化）。 */
+  persist?: boolean;
+  /** 为 false 时不在挂载时合并内置 seed（展示页用）。 */
+  mergePlanSeedOnMount?: boolean;
+  /** 配置来源：local=读写浏览器缓存；bundled=仅读取打包的 configs/*.json。 */
+  source?: 'local' | 'bundled';
+};
+
+export function useTripData(options?: UseTripDataOptions) {
+  const persist = options?.persist !== false;
+  const mergePlanSeedOnMount = options?.mergePlanSeedOnMount !== false;
+  const source = options?.source ?? 'local';
+  const readOnlyBundled = source === 'bundled';
+  const listConfigs = readOnlyBundled ? listBundledTripConfigs : listTripConfigs;
+  const getConfigById = readOnlyBundled ? getBundledTripConfigById : getTripConfigById;
+  const getDefaultConfig = readOnlyBundled ? getBundledDefaultTripConfig : getDefaultTripConfig;
+
+  const [configs, setConfigs] = useState(() => listConfigs());
   const [activeConfigId, setActiveConfigIdState] = useState<string>(() => {
-    ensureTripConfigsInitialized();
-    const fromLs = getActiveTripConfigId();
-    if (fromLs && getTripConfigById(fromLs)) return fromLs;
-    return getDefaultTripConfig().id;
+    if (!readOnlyBundled) {
+      ensureTripConfigsInitialized();
+      const fromLs = getActiveTripConfigId();
+      if (fromLs && getConfigById(fromLs)) return fromLs;
+    }
+    return getDefaultConfig().id;
   });
 
   const [data, dispatch] = useReducer(tripReducer, undefined, () => {
-    const cfg = getTripConfigById(activeConfigId) ?? getDefaultTripConfig();
-    setActiveTripConfigId(cfg.id);
+    const cfg = getConfigById(activeConfigId) ?? getDefaultConfig();
+    if (!readOnlyBundled) setActiveTripConfigId(cfg.id);
     return cfg.data;
   });
 
   useEffect(() => {
+    if (!mergePlanSeedOnMount) return;
     dispatch({ type: 'mergePlanSeed' });
-  }, []);
+  }, [mergePlanSeedOnMount]);
 
   useEffect(() => {
+    if (!persist) return;
     upsertTripConfigData(activeConfigId, data);
-  }, [activeConfigId, data]);
+  }, [persist, activeConfigId, data]);
 
   const activeGroup = useMemo(() => {
     if (!data.activeGroupId) return data.groups[0] ?? null;
@@ -283,17 +319,17 @@ export function useTripData() {
   }, []);
 
   const refreshConfigs = useCallback(() => {
-    setConfigs(listTripConfigs());
-  }, []);
+    setConfigs(listConfigs());
+  }, [listConfigs]);
 
   const switchTripConfig = useCallback((id: string) => {
-    const cfg = getTripConfigById(id);
+    const cfg = getConfigById(id);
     if (!cfg) return;
-    setActiveTripConfigId(id);
+    if (!readOnlyBundled) setActiveTripConfigId(id);
     setActiveConfigIdState(id);
     dispatch({ type: 'replace', data: cfg.data });
     refreshConfigs();
-  }, [refreshConfigs]);
+  }, [getConfigById, readOnlyBundled, refreshConfigs]);
 
   const newTripConfig = useCallback(
     (title: string) => {

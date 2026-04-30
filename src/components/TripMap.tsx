@@ -3,6 +3,7 @@ import AMapLoader from '@amap/amap-jsapi-loader';
 import type { Place, TripData } from '../types/trip';
 import { DEFAULT_CENTER, DEFAULT_ZOOM, groupColor } from '../constants';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 type LayerGroup = {
   groupId: string;
@@ -17,6 +18,8 @@ type TripMapProps = {
   onShowAllPlaces: (v: boolean) => void;
   showAllPopups: boolean;
   onShowAllPopups: (v: boolean) => void;
+  showPolylines: boolean;
+  onShowPolylines: (v: boolean) => void;
   selectedPlaceId: string | null;
   pickMode: boolean;
   onPickMode: (v: boolean) => void;
@@ -24,6 +27,22 @@ type TripMapProps = {
   onFitMap: () => void;
   onSelectPlace: (id: string | null) => void;
   onMapPick: (lat: number, lng: number, name?: string, address?: string) => void;
+  /** 为 true 时禁用地图加点、搜索「添加」等一切写入类操作（展示页）。 */
+  readOnly?: boolean;
+  /** 勾选、按钮等使用更短文案（展示页手机端）。 */
+  compactLabels?: boolean;
+  /**
+   * `corner`：编辑页默认右下角面板。
+   * `bottom-sheet`：选项抽屉（旧展示页用，仍保留）。
+   * `view-app`：展示页专用——仅地图 + 右上角一体搜索，无选项抽屉。
+   */
+  toolbarMode?: 'corner' | 'bottom-sheet' | 'view-app';
+  /** 为 false 时不显示地图侧边的攻略便笺浮层（由外层用底部抽屉等方式展示）。 */
+  mapGuideOverlay?: boolean;
+  /** 与 `mapGuideOverlay={false}` + `bottom-sheet` 配合：在选项抽屉内打开外层攻略。 */
+  onRequestOpenGuide?: () => void;
+  /** 为 true 时点击地图标记不触发 `onSelectPlace`（展示页与列表解耦）。 */
+  suppressMarkerSelection?: boolean;
 };
 
 type PoiResult = {
@@ -117,6 +136,8 @@ export function TripMap({
   onShowAllPlaces,
   showAllPopups,
   onShowAllPopups,
+  showPolylines,
+  onShowPolylines,
   selectedPlaceId,
   pickMode,
   onPickMode,
@@ -124,6 +145,12 @@ export function TripMap({
   onFitMap,
   onSelectPlace,
   onMapPick,
+  readOnly = false,
+  compactLabels = false,
+  toolbarMode = 'corner',
+  mapGuideOverlay = true,
+  onRequestOpenGuide,
+  suppressMarkerSelection = false,
 }: TripMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<ReturnType<Awaited<ReturnType<typeof AMapLoader.load>>['Map']> | null>(null);
@@ -151,6 +178,18 @@ export function TripMap({
       return false;
     }
   });
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const useSheetToolbar = toolbarMode === 'bottom-sheet';
+  const useViewAppChrome = toolbarMode === 'view-app';
+
+  useEffect(() => {
+    if (!sheetOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setSheetOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [sheetOpen]);
 
   const layers: LayerGroup[] = useMemo(() => {
     if (showAllGroups) {
@@ -221,7 +260,7 @@ export function TripMap({
     [resolvedGroupId, showAllGroups, fitPositionsWithPinned],
   );
 
-  const cursorClass = pickMode ? 'map-pick-cursor' : '';
+  const cursorClass = pickMode && !readOnly ? 'map-pick-cursor' : '';
 
   useEffect(() => {
     const key = import.meta.env.VITE_AMAP_KEY;
@@ -365,33 +404,36 @@ export function TripMap({
 
     const overlays: object[] = [];
 
-    for (const layer of layers) {
-      const color = groupColor(layer.groupIndex);
-      const path = layer.placeIds
-        .map((id) => data.places[id])
-        .filter(Boolean)
-        .map((p) => [p.lng, p.lat]);
-      if (path.length < 2) continue;
-      const poly = new AMap.Polyline({
-        path,
-        strokeColor: color,
-        strokeWeight: 4,
-        strokeOpacity: 0.85,
-      });
-      map.add(poly);
-      overlays.push(poly);
-
-      for (let i = 0; i < layer.placeIds.length - 1; i++) {
-        const a = data.places[layer.placeIds[i]!];
-        const b = data.places[layer.placeIds[i + 1]!];
-        if (!a || !b) continue;
-        const label = new AMap.Marker({
-          position: new AMap.LngLat((a.lng + b.lng) / 2, (a.lat + b.lat) / 2),
-          content: `<div class="distance-label">${formatDistanceMeters(straightDistanceMeters(a, b))}</div>`,
-          anchor: 'center',
-          zIndex: 90,
+    if (showPolylines) {
+      for (const layer of layers) {
+        const color = groupColor(layer.groupIndex);
+        const path = layer.placeIds
+          .map((id) => data.places[id])
+          .filter(Boolean)
+          .map((p) => [p.lng, p.lat]);
+        if (path.length < 2) continue;
+        const poly = new AMap.Polyline({
+          path,
+          strokeColor: color,
+          strokeWeight: 4,
+          strokeOpacity: 0.85,
         });
-        map.add(label);
+        map.add(poly);
+        overlays.push(poly);
+
+        for (let i = 0; i < layer.placeIds.length - 1; i++) {
+          const a = data.places[layer.placeIds[i]!];
+          const b = data.places[layer.placeIds[i + 1]!];
+          if (!a || !b) continue;
+          const label = new AMap.Marker({
+            position: new AMap.LngLat((a.lng + b.lng) / 2, (a.lat + b.lat) / 2),
+            content: `<div class="distance-label">${formatDistanceMeters(straightDistanceMeters(a, b))}</div>`,
+            anchor: 'center',
+            zIndex: 90,
+          });
+          map.add(label);
+          overlays.push(label);
+        }
       }
     }
 
@@ -435,7 +477,7 @@ export function TripMap({
                 },
         );
         marker.on('click', () => {
-          onSelectPlace(id);
+          if (!suppressMarkerSelection) onSelectPlace(id);
         });
         map.add(marker);
         overlays.push(marker);
@@ -463,14 +505,14 @@ export function TripMap({
             },
       );
       marker.on('click', () => {
-        onSelectPlace(id);
+        if (!suppressMarkerSelection) onSelectPlace(id);
       });
       map.add(marker);
       overlays.push(marker);
     }
 
     const onMapClick = (e: { lnglat: { lat: number; lng: number } }) => {
-      if (pickMode) {
+      if (pickMode && !readOnly) {
         onMapPick(e.lnglat.lat, e.lnglat.lng);
       }
     };
@@ -499,7 +541,10 @@ export function TripMap({
     pinnedPlaceIds,
     onSelectPlace,
     onMapPick,
+    readOnly,
+    suppressMarkerSelection,
     showAllPopups,
+    showPolylines,
   ]);
 
   /**
@@ -586,15 +631,229 @@ export function TripMap({
     return data.groups.find((g) => g.id === resolvedGroupId)?.guideMd ?? '';
   }, [data.groups, resolvedGroupId]);
 
+  const searchPlaceholder = compactLabels
+    ? readOnly
+      ? '搜点·预览'
+      : '搜点'
+    : readOnly
+      ? '地图搜点（临时预览）'
+      : '地图搜点';
+  const searchButtonText = compactLabels ? (searching ? '…' : '搜') : searching ? '搜索中' : '搜索';
+  const labelPlaces = compactLabels ? '点位' : '展示全部点位';
+  const labelPopups = compactLabels ? '弹窗' : '展示全部弹窗';
+  const labelLines = compactLabels ? '连线' : '显示连线';
+  const labelFit = compactLabels ? '范围' : '缩放到范围';
+
+  const searchRow = compactLabels ? (
+    <div className="map-corner-search-row">
+      <input
+        className="map-corner-input"
+        value={searchKeyword}
+        placeholder={searchPlaceholder}
+        onChange={(e) => setSearchKeyword(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            doPoiSearch();
+          }
+        }}
+      />
+      <button type="button" className="map-corner-btn map-corner-btn--inline" onClick={doPoiSearch} disabled={searching}>
+        {searchButtonText}
+      </button>
+    </div>
+  ) : (
+    <>
+      <input
+        className="map-corner-input"
+        value={searchKeyword}
+        placeholder={searchPlaceholder}
+        onChange={(e) => setSearchKeyword(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            doPoiSearch();
+          }
+        }}
+      />
+      <button type="button" className="map-corner-btn" onClick={doPoiSearch} disabled={searching}>
+        {searchButtonText}
+      </button>
+    </>
+  );
+
+  const toolbarBody = (
+    <>
+      <div className="map-corner-search">
+        {searchRow}
+        {searchRows.length > 0 ? (
+          <ul className="map-corner-results">
+            {searchRows.map((row) => (
+              <li key={row.id}>
+                <div
+                  className="map-corner-result-item"
+                  role="button"
+                  tabIndex={0}
+                  onMouseEnter={() => previewPoi(row)}
+                  onFocus={() => previewPoi(row)}
+                  onClick={() => previewPoi(row)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      previewPoi(row);
+                    }
+                  }}
+                >
+                  <span className="map-corner-result-text">
+                    <span className="map-corner-result-name">{row.name}</span>
+                    <span className="map-corner-result-addr">{row.address || '无地址'}</span>
+                  </span>
+                  {readOnly ? null : (
+                    <button
+                      type="button"
+                      className="map-corner-add-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        previewPoi(row);
+                        onMapPick(row.lat, row.lng, row.name, row.address);
+                        setSearchRows([]);
+                        clearPreviewMarker();
+                      }}
+                    >
+                      添加
+                    </button>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+      <label className="map-corner-check" title={compactLabels ? '展示全部点位' : undefined}>
+        <input
+          type="checkbox"
+          checked={showAllGroups}
+          onChange={(e) => onShowAllPlaces(e.target.checked)}
+          aria-label={compactLabels ? '展示全部点位' : undefined}
+        />
+        <span>{labelPlaces}</span>
+      </label>
+      <label className="map-corner-check" title={compactLabels ? '展示全部弹窗' : undefined}>
+        <input
+          type="checkbox"
+          checked={showAllPopups}
+          onChange={(e) => onShowAllPopups(e.target.checked)}
+          aria-label={compactLabels ? '展示全部弹窗' : undefined}
+        />
+        <span>{labelPopups}</span>
+      </label>
+      <label className="map-corner-check" title={compactLabels ? '显示连线' : undefined}>
+        <input
+          type="checkbox"
+          checked={showPolylines}
+          onChange={(e) => onShowPolylines(e.target.checked)}
+          aria-label={compactLabels ? '显示连线' : undefined}
+        />
+        <span>{labelLines}</span>
+      </label>
+      {readOnly ? null : (
+        <label className="map-corner-check">
+          <input
+            type="checkbox"
+            checked={pickMode}
+            onChange={(e) => onPickMode(e.target.checked)}
+          />
+          <span>点击地图加点</span>
+        </label>
+      )}
+      <button type="button" className="map-corner-btn" onClick={onFitMap} aria-label="缩放到当前点位范围">
+        {labelFit}
+      </button>
+    </>
+  );
+
+  const rootClass = [
+    'trip-map-root',
+    readOnly && 'trip-map-root--readonly',
+    useViewAppChrome && 'trip-map-root--view-app',
+    cursorClass,
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  const viewAppSearchResults =
+    searchRows.length > 0 ? (
+      <ul className="trip-map-view-search-results">
+        {searchRows.map((row) => (
+          <li key={row.id}>
+            <div
+              className="trip-map-view-search-result"
+              role="button"
+              tabIndex={0}
+              onMouseEnter={() => previewPoi(row)}
+              onFocus={() => previewPoi(row)}
+              onClick={() => previewPoi(row)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  previewPoi(row);
+                }
+              }}
+            >
+              <span className="trip-map-view-search-result-name">{row.name}</span>
+              <span className="trip-map-view-search-result-addr">{row.address || '无地址'}</span>
+            </div>
+          </li>
+        ))}
+      </ul>
+    ) : null;
+
+  const viewAppSearchChrome = useViewAppChrome ? (
+    <div className="trip-map-view-search-layer">
+      <div className="trip-map-search-fused">
+        <input
+          className="trip-map-search-fused-input"
+          value={searchKeyword}
+          placeholder={readOnly ? '搜点·预览' : '搜索地点'}
+          onChange={(e) => setSearchKeyword(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              doPoiSearch();
+            }
+          }}
+          aria-label="地图搜索关键词"
+        />
+        <button
+          type="button"
+          className="trip-map-search-fused-btn"
+          onClick={doPoiSearch}
+          disabled={searching}
+          aria-label="搜索"
+        >
+          {searching ? '…' : '搜'}
+        </button>
+      </div>
+      {viewAppSearchResults}
+    </div>
+  ) : null;
+
   return (
-    <div className={`trip-map-root ${cursorClass}`}>
+    <div className={rootClass}>
       {missingKey ? (
         <div className="trip-map-error">
           请配置高德 Key：在 web 目录创建 .env.local，设置 VITE_AMAP_KEY 与 VITE_AMAP_SECURITY_JS_CODE
         </div>
       ) : null}
-      <div ref={containerRef} className="trip-map-container" />
-      {activeGuideMd.trim() ? (
+      {useViewAppChrome ? (
+        <div className="trip-map-view-app-body">
+          <div ref={containerRef} className="trip-map-container" />
+          {viewAppSearchChrome}
+        </div>
+      ) : (
+        <div ref={containerRef} className="trip-map-container" />
+      )}
+      {mapGuideOverlay && activeGuideMd.trim() ? (
         <>
           <button
             type="button"
@@ -618,121 +877,96 @@ export function TripMap({
             className={`map-note-card ${noteHidden ? 'map-note-card--hidden' : ''}`}
             aria-label="分组攻略便笺"
           >
-            {noteHidden ? null : <ReactMarkdown>{activeGuideMd}</ReactMarkdown>}
+            {noteHidden ? null : (
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  table: ({ children, ...props }) => (
+                    <div className="markdown-table-wrap">
+                      <table {...props}>{children}</table>
+                    </div>
+                  ),
+                }}
+              >
+                {activeGuideMd}
+              </ReactMarkdown>
+            )}
           </aside>
         </>
       ) : null}
-      <button
-        type="button"
-        className={`map-drawer-handle map-drawer-handle--corner ${cornerCollapsed ? 'is-collapsed' : ''}`}
-        aria-label={cornerCollapsed ? '展开右下角面板' : '收起右下角面板'}
-        onClick={() => {
-          setCornerCollapsed((v) => {
-            const next = !v;
-            try {
-              localStorage.setItem('ryokou-ui-corner-collapsed-v1', next ? '1' : '0');
-            } catch {
-              /* ignore */
-            }
-            return next;
-          });
-        }}
-      >
-        <span className="map-drawer-handle__text">面板</span>
-      </button>
-      <aside
-        className={`map-corner-panel ${cornerCollapsed ? 'map-corner-panel--collapsed' : ''}`}
-        aria-label="地图显示选项"
-      >
-        {cornerCollapsed ? null : (
-          <>
-            <div className="map-corner-search">
-          <input
-            className="map-corner-input"
-            value={searchKeyword}
-            placeholder="地图搜点"
-            onChange={(e) => setSearchKeyword(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                doPoiSearch();
-              }
-            }}
-          />
-          <button type="button" className="map-corner-btn" onClick={doPoiSearch} disabled={searching}>
-            {searching ? '搜索中' : '搜索'}
+      {useViewAppChrome ? null : useSheetToolbar ? (
+        <>
+          <button
+            type="button"
+            className="map-sheet-trigger"
+            aria-label="地图搜索与显示选项"
+            onClick={() => setSheetOpen(true)}
+          >
+            选项
           </button>
-          {searchRows.length > 0 ? (
-            <ul className="map-corner-results">
-              {searchRows.map((row) => (
-                <li key={row.id}>
-                  <div
-                    className="map-corner-result-item"
-                    role="button"
-                    tabIndex={0}
-                    onMouseEnter={() => previewPoi(row)}
-                    onFocus={() => previewPoi(row)}
-                    onClick={() => previewPoi(row)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        previewPoi(row);
-                      }
-                    }}
-                  >
-                    <span className="map-corner-result-text">
-                      <span className="map-corner-result-name">{row.name}</span>
-                      <span className="map-corner-result-addr">{row.address || '无地址'}</span>
-                    </span>
+          {sheetOpen ? (
+            <>
+              <div
+                className="map-sheet-backdrop"
+                aria-hidden
+                onClick={() => setSheetOpen(false)}
+              />
+              <aside className="map-sheet-panel" role="dialog" aria-label="地图搜索与显示">
+                <div className="map-sheet-head">
+                  <button type="button" className="map-sheet-done" onClick={() => setSheetOpen(false)}>
+                    完成
+                  </button>
+                </div>
+                <div className="map-sheet-body">
+                  {!mapGuideOverlay && activeGuideMd.trim() && onRequestOpenGuide ? (
                     <button
                       type="button"
-                      className="map-corner-add-btn"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        previewPoi(row);
-                        onMapPick(row.lat, row.lng, row.name, row.address);
-                        setSearchRows([]);
-                        clearPreviewMarker();
+                      className="map-sheet-guide-entry"
+                      onClick={() => {
+                        setSheetOpen(false);
+                        onRequestOpenGuide();
                       }}
                     >
-                      添加
+                      <span className="map-sheet-guide-entry__label">本片攻略</span>
+                      <span className="map-sheet-guide-entry__hint" aria-hidden>
+                        查看
+                      </span>
                     </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
+                  ) : null}
+                  {toolbarBody}
+                </div>
+              </aside>
+            </>
           ) : null}
-        </div>
-        <label className="map-corner-check">
-          <input
-            type="checkbox"
-            checked={showAllGroups}
-            onChange={(e) => onShowAllPlaces(e.target.checked)}
-          />
-          <span>展示全部点位</span>
-        </label>
-        <label className="map-corner-check">
-          <input
-            type="checkbox"
-            checked={showAllPopups}
-            onChange={(e) => onShowAllPopups(e.target.checked)}
-          />
-          <span>展示全部弹窗</span>
-        </label>
-        <label className="map-corner-check">
-          <input
-            type="checkbox"
-            checked={pickMode}
-            onChange={(e) => onPickMode(e.target.checked)}
-          />
-          <span>点击地图加点</span>
-        </label>
-        <button type="button" className="map-corner-btn" onClick={onFitMap}>
-          缩放到范围
-        </button>
-          </>
-        )}
-      </aside>
+        </>
+      ) : (
+        <>
+          <button
+            type="button"
+            className={`map-drawer-handle map-drawer-handle--corner ${cornerCollapsed ? 'is-collapsed' : ''}`}
+            aria-label={cornerCollapsed ? '展开右下角面板' : '收起右下角面板'}
+            onClick={() => {
+              setCornerCollapsed((v) => {
+                const next = !v;
+                try {
+                  localStorage.setItem('ryokou-ui-corner-collapsed-v1', next ? '1' : '0');
+                } catch {
+                  /* ignore */
+                }
+                return next;
+              });
+            }}
+          >
+            <span className="map-drawer-handle__text">面板</span>
+          </button>
+          <aside
+            className={`map-corner-panel ${cornerCollapsed ? 'map-corner-panel--collapsed' : ''}`}
+            aria-label="地图显示选项"
+          >
+            {cornerCollapsed ? null : toolbarBody}
+          </aside>
+        </>
+      )}
     </div>
   );
 }

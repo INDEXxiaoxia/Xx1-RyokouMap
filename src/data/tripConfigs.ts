@@ -29,6 +29,10 @@ function getBundledConfigs(): TripConfigOption[] {
     });
 }
 
+export function listBundledTripConfigs(): TripConfigOption[] {
+  return getBundledConfigs();
+}
+
 function loadConfigsFromLocalStorage(): TripConfigOption[] | null {
   try {
     const raw = localStorage.getItem(LS_CONFIGS_KEY);
@@ -88,8 +92,26 @@ export function getDefaultTripConfig(): TripConfigOption {
   };
 }
 
+export function getBundledDefaultTripConfig(): TripConfigOption {
+  const configs = listBundledTripConfigs();
+  return configs.at(-1) ?? {
+    id: 'default',
+    title: '默认',
+    data: {
+      version: 1,
+      groups: [{ id: 'default', title: '默认', placeIds: [] }],
+      places: {},
+      activeGroupId: 'default',
+    },
+  };
+}
+
 export function getTripConfigById(id: string): TripConfigOption | null {
   return listTripConfigs().find((c) => c.id === id) ?? null;
+}
+
+export function getBundledTripConfigById(id: string): TripConfigOption | null {
+  return listBundledTripConfigs().find((c) => c.id === id) ?? null;
 }
 
 export function upsertTripConfigData(id: string, data: TripData): void {

@@ -2,16 +2,16 @@
 export const DEFAULT_CENTER: [number, number] = [30.246, 120.143];
 export const DEFAULT_ZOOM = 12;
 
-/** 分组折线与标记配色（循环使用） */
+/** 分组折线与标记配色（循环使用，与 UI 粉蓝淡色体系协调、地图上仍易区分） */
 export const GROUP_PALETTE = [
-  '#2563eb',
-  '#dc2626',
-  '#16a34a',
-  '#ca8a04',
-  '#9333ea',
-  '#0891b2',
-  '#db2777',
-  '#4f46e5',
+  '#5c6fd8',
+  '#e07a9a',
+  '#4a9fd8',
+  '#5ab89a',
+  '#c9a44a',
+  '#8b7fd4',
+  '#52b8c8',
+  '#d97b85',
 ] as const;
 
 export function groupColor(index: number): string {
